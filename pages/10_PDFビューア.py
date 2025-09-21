@@ -510,7 +510,7 @@ with right:
 
             # ========== テキスト抽出情報 ==========
             st.divider()
-            st.subheader("📝 抽出テキスト")
+            st.subheader("📝 抽出テキスト（get_textの抽出：OCRは行っていない）")
             text_info = analyze_pdf_texts(str(current_abs), current_abs.stat().st_mtime_ns, mode=scan_mode, sample_pages=int(scan_sample_pages))
             st.write(f"走査ページ数: {text_info['scanned_pages']}/{text_info['total_pages']}")
             if not text_info["pages"]:

@@ -1,5 +1,8 @@
 # pages/10_PDFビューア.py
 # ------------------------------------------------------------
+# 📄 PDF ビューア（サムネイル）— PDF処理は lib/pdf_tools.py に集約
+# ------------------------------------------------------------
+# ------------------------------------------------------------
 # 📄 PDF ビューア（サムネイル）
 # - サムネ下に「テキストPDF/画像PDF」＋ページ数を表示
 # - 右ペインは ①pdf.js（streamlit-pdf-viewer） ②Streamlit内蔵（st.pdf）
@@ -20,12 +23,10 @@
 # 3) 現在の抽出モードで得た画像を ZIP で一括ダウンロード可能
 # 4) 解析関数で SMask xref を保持（合成に使用）
 # ------------------------------------------------------------
+
 from __future__ import annotations
 from pathlib import Path
 from typing import List, Dict, Any
-import io
-import zipfile
-import base64
 import streamlit as st
 
 # Optional: pdf.js ビューア
@@ -35,179 +36,17 @@ try:
 except Exception:
     HAS_PDFJS = False
 
+# 共有ユーティリティ（lib/pdf_tools は lib/pdf の互換レイヤ）
+from lib.pdf_tools import (
+    render_thumb_png, read_pdf_bytes, read_pdf_b64, quick_pdf_info,
+    analyze_pdf_images, analyze_pdf_texts, extract_embedded_images,
+    iter_pdfs, rel_from
+)
+
 # ========== パス ==========
 APP_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = APP_ROOT / "data"
 PDF_ROOT_DEFAULT = DATA_DIR / "pdf"
-
-# ========== サムネ & PDF読み ==========
-@st.cache_data(show_spinner=False)
-def render_thumb_png(pdf_path: str, thumb_px: int, mtime_ns: int) -> bytes:
-    import fitz  # PyMuPDF
-    doc = fitz.open(pdf_path)
-    try:
-        page = doc.load_page(0)
-        w = page.rect.width
-        zoom = max(0.5, min(5.0, float(thumb_px) / max(w, 1.0)))
-        mat = fitz.Matrix(zoom, zoom)
-        pix = page.get_pixmap(matrix=mat, alpha=False)
-        return pix.tobytes("png")
-    finally:
-        doc.close()
-
-@st.cache_data(show_spinner=False)
-def read_pdf_bytes(pdf_path: str, mtime_ns: int) -> bytes:
-    return Path(pdf_path).read_bytes()
-
-@st.cache_data(show_spinner=False)
-def read_pdf_b64(pdf_path: str, mtime_ns: int) -> str:
-    return base64.b64encode(Path(pdf_path).read_bytes()).decode("ascii")
-
-@st.cache_data(show_spinner=False)
-def quick_pdf_info(pdf_path: str, mtime_ns: int, sample_pages: int = 6) -> dict:
-    """
-    先頭 sample_pages をざっくり解析して
-    - pages: 総ページ数
-    - kind : 'テキストPDF' or '画像PDF'
-    を返す（キャッシュはパス＋mtimeで無効化）。
-    """
-    import fitz
-    doc = fitz.open(pdf_path)
-    try:
-        n = doc.page_count
-        check = min(sample_pages, n if n > 0 else 1)
-        text_pages = 0
-        for i in range(check):
-            p = doc.load_page(i)
-            txt = (p.get_text("text") or "").strip()
-            if len(txt) >= 20:
-                text_pages += 1
-        ratio = (text_pages / max(check, 1))
-        kind = "テキストPDF" if ratio >= 0.3 else "画像PDF"
-        return {"pages": n, "kind": kind, "ratio": ratio, "checked": check}
-    finally:
-        doc.close()
-
-# ========== 画像埋め込み解析 ==========
-@st.cache_data(show_spinner=True)
-def analyze_pdf_images(
-    pdf_path: str,
-    mtime_ns: int,
-    mode: str = "all",          # "all" or "sample"
-    sample_pages: int = 6
-) -> Dict[str, Any]:
-    """
-    PDF内の画像埋め込みを走査して集計する。
-    戻り値:
-      {
-        "scanned_pages": int,
-        "total_pages": int,
-        "total_images": int,
-        "formats_count": {"jpg": 5, ...},
-        "pages": [
-          {"page": 1, "count": 2, "formats": ["jpg","png"], "xrefs":[..], "smasks":[..]},
-          ...
-        ]
-      }
-    """
-    import fitz
-    from collections import Counter
-
-    doc = fitz.open(pdf_path)
-    try:
-        total_pages = doc.page_count
-        if total_pages <= 0:
-            return {"scanned_pages": 0, "total_pages": 0, "total_images": 0, "formats_count": {}, "pages": []}
-
-        if mode == "sample":
-            end = min(sample_pages, total_pages)
-            page_range = range(0, end)
-        else:
-            page_range = range(0, total_pages)
-
-        pages_info = []
-        formats_all = []
-        total_images = 0
-
-        for i in page_range:
-            page = doc.load_page(i)
-            images = page.get_images(full=True)  # (xref, smask, w, h, bpc, colorspace, ...)
-            cnt = len(images)
-            fmts, xrefs, smasks = [], [], []
-            if cnt > 0:
-                for im in images:
-                    xref = im[0]
-                    smask = im[1]  # 0 or xref
-                    try:
-                        meta = doc.extract_image(xref)
-                        ext = (meta.get("ext") or "bin").lower()
-                    except Exception:
-                        ext = "bin"
-                    fmts.append(ext)
-                    xrefs.append(xref)
-                    smasks.append(smask)
-                    formats_all.append(ext)
-                total_images += cnt
-
-            pages_info.append({"page": i + 1, "count": cnt, "formats": fmts, "xrefs": xrefs, "smasks": smasks})
-
-        formats_count = dict(Counter(formats_all))
-        return {
-            "scanned_pages": len(page_range),
-            "total_pages": total_pages,
-            "total_images": total_images,
-            "formats_count": formats_count,
-            "pages": pages_info
-        }
-    finally:
-        doc.close()
-
-# ========== テキスト抽出解析 ==========
-@st.cache_data(show_spinner=True)
-def analyze_pdf_texts(
-    pdf_path: str,
-    mtime_ns: int,
-    mode: str = "all",
-    sample_pages: int = 6
-) -> Dict[str, Any]:
-    """
-    PDF内のテキストを抽出して返す（ページごとに冒頭500文字までプレビュー）。
-    """
-    import fitz
-    doc = fitz.open(pdf_path)
-    try:
-        total_pages = doc.page_count
-        if total_pages <= 0:
-            return {"scanned_pages": 0, "total_pages": 0, "pages": []}
-
-        if mode == "sample":
-            end = min(sample_pages, total_pages)
-            page_range = range(0, end)
-        else:
-            page_range = range(0, total_pages)
-
-        pages_info = []
-        for i in page_range:
-            page = doc.load_page(i)
-            txt = (page.get_text("text") or "").strip()
-            # preview = txt[:500] + ("..." if len(txt) > 500 else "")
-            # pages_info.append({"page": i + 1, "text": preview})
-            pages_info.append({"page": i + 1, "text": txt})
-
-        return {"scanned_pages": len(page_range), "total_pages": total_pages, "pages": pages_info}
-    finally:
-        doc.close()
-
-def list_pdfs(root: Path) -> List[Path]:
-    if not root.exists():
-        return []
-    return sorted(root.rglob("*.pdf"))
-
-def rel_from(pdf_path: Path, base: Path) -> str:
-    try:
-        return str(pdf_path.relative_to(base))
-    except ValueError:
-        return pdf_path.name
 
 # ========== UI ==========
 st.set_page_config(page_title="PDF ビューア", page_icon="📄", layout="wide")
@@ -258,7 +97,7 @@ with st.sidebar:
         "抽出モード",
         ["XObjectそのまま（真の埋め込み画像）", "ページ見た目サイズで再サンプリング"],
         index=0,
-        help="前者はPDFに埋め込まれた元画像をそのまま（小さい場合あり）。後者はページ上の見た目サイズで切出し。"
+        help="前者はPDFに埋め込まれた元画像。後者はページ上の見た目サイズで切出し。"
     )
     resample_dpi = st.slider("再サンプリング時のDPI", 72, 300, 144, 12, help="抽出モードが再サンプリングの時のみ有効")
 
@@ -266,7 +105,7 @@ if "pdf_selected" not in st.session_state:
     st.session_state.pdf_selected = None
 
 # ========== データ取得 ==========
-pdf_paths = list_pdfs(pdf_root)
+pdf_paths = iter_pdfs(pdf_root)
 if name_filter:
     pdf_paths = [p for p in pdf_paths if name_filter.lower() in p.name.lower()]
 if year_filter:
@@ -299,7 +138,7 @@ with left:
 
             try:
                 png = render_thumb_png(str(p), int(thumb_px), mtime_ns)
-                cols[c].image(png, caption=rel, use_container_width=True)
+                cols[c].image(png, caption=rel, width="stretch")  # use_container_width → width
             except Exception as e:
                 cols[c].warning(f"サムネ生成失敗: {rel}\n{e}")
 
@@ -312,7 +151,7 @@ with left:
             except Exception:
                 cols[c].markdown("<div style='font-size:12px;color:#555;'>🧾 種別不明・📄 ページ数不明</div>", unsafe_allow_html=True)
 
-            if cols[c].button("👁 開く", key=f"open_{rel}", use_container_width=True):
+            if cols[c].button("👁 開く", key=f"open_{rel}", width="stretch"):  # use_container_width → width
                 st.session_state.pdf_selected = rel
 
 # ========== 右：ビューア ==========
@@ -326,7 +165,7 @@ with right:
         st.error("選択されたファイルが見つかりません。")
     else:
         try:
-            # ---- 左上バッジに表示するラベル ----
+            # 左上バッジ用ラベル
             if viewer_mode == "ブラウザPDFプラグイン":
                 zoom_label = f"倍率: {zoom_preset}"
             elif viewer_mode == "Streamlit内蔵（st.pdf）":
@@ -334,7 +173,7 @@ with right:
             else:
                 zoom_label = "倍率: 可変（pdf.js）"
 
-            # ---- 方式ごとの表示 ----
+            # 表示方式ごとに出力
             if viewer_mode == "Streamlit内蔵（st.pdf）":
                 st.markdown(
                     f"""
@@ -412,98 +251,30 @@ with right:
                     lines.append(f"p.{row['page']:>4}: 画像 {row['count']:>3} 枚｜形式 [{fmts}]")
                 st.text("\n".join(lines) if lines else "（画像は検出されませんでした）")
 
-            # ========== 埋め込み画像の抽出＆表示（モード切替＋ZIP出力） ==========
+            # ========== 埋め込み画像の抽出＆ZIP ==========
             if show_embedded_images and img_info["total_images"] > 0:
                 with st.expander("埋め込み画像を表示 / ダウンロード", expanded=False):
-                    import fitz
-
-                    def human_size(n: int) -> str:
-                        units = ["B", "KB", "MB", "GB", "TB"]
-                        size = float(n)
-                        for u in units:
-                            if size < 1024 or u == units[-1]:
-                                return f"{size:.0f} {u}" if u == "B" else f"{size:.1f} {u}"
-                            size /= 1024
-
-                    def export_xobject_png(doc: fitz.Document, xref: int, smask: int):
-                        """XObject（真の埋め込み画像）を PNG(RGB/RGBA) に正規化して返す。"""
-                        pix = fitz.Pixmap(doc, xref)
-                        # 多チャンネル（CMYK等）→ RGB
-                        if pix.n > 4 and pix.alpha == 0:
-                            pix = fitz.Pixmap(fitz.csRGB, pix)
-                        # SMask 合成
-                        if smask and smask > 0:
-                            m = fitz.Pixmap(doc, smask)
-                            pix = fitz.Pixmap(pix, m)
-                        return pix.tobytes("png"), pix.width, pix.height
-
-                    def export_resampled_png(page: "fitz.Page", rect: "fitz.Rect", dpi: int):
-                        """ページ上の見た目サイズで切り出してPNG化（視覚的抽出）。"""
-                        mat = fitz.Matrix(dpi / 72.0, dpi / 72.0)
-                        pm = page.get_pixmap(clip=rect, matrix=mat, alpha=False)
-                        return pm.tobytes("png"), pm.width, pm.height
-
-                    # 実PDFを開く
-                    doc = fitz.open(str(current_abs))
-                    zip_buf = io.BytesIO()
-                    zf = zipfile.ZipFile(zip_buf, "w", compression=zipfile.ZIP_DEFLATED)
-
-                    try:
-                        for row in img_info["pages"]:
-                            if row["count"] == 0:
-                                continue
-                            pno = row["page"]
-                            st.markdown(f"**p.{pno} の画像**")
-                            page = doc.load_page(pno - 1)
-                            smasks = row.get("smasks", [0] * len(row["xrefs"]))
-                            cols = st.columns(min(3, max(1, row["count"])))
-                            col_idx = 0
-
-                            for idx_in_page, (xref, smask) in enumerate(zip(row["xrefs"], smasks), start=1):
-                                try:
-                                    if extract_mode.startswith("XObject"):
-                                        png_bytes, w, h = export_xobject_png(doc, xref, smask)
-                                        label = f"XObject {w}×{h}（{human_size(len(png_bytes))}）"
-                                        fname = f"p{pno:03d}_img{idx_in_page:02d}_x{xref}.png"
-                                    else:
-                                        rects = []
-                                        try:
-                                            rects = page.get_image_rects(xref)
-                                        except Exception:
-                                            rects = []
-                                        if rects:
-                                            # 1つの xref が複数回描画されることがある → すべて出す
-                                            for rep_idx, r in enumerate(rects, start=1):
-                                                png_bytes, w, h = export_resampled_png(page, r, resample_dpi)
-                                                label = f"切出し {w}×{h}（{human_size(len(png_bytes))}）"
-                                                fname = f"p{pno:03d}_img{idx_in_page:02d}_rep{rep_idx}_x{xref}.png"
-                                                cols[col_idx % 3].image(png_bytes, caption=label, use_container_width=True)
-                                                zf.writestr(fname, png_bytes)
-                                                col_idx += 1
-                                            # 続きへ（rep毎に描画済）
-                                            continue
-                                        else:
-                                            # 矩形が取得できない場合はフォールバックでXObject抽出
-                                            png_bytes, w, h = export_xobject_png(doc, xref, smask)
-                                            label = f"XObject {w}×{h}（{human_size(len(png_bytes))}）"
-                                            fname = f"p{pno:03d}_img{idx_in_page:02d}_x{xref}.png"
-
-                                    # ここに来るのは XObject抽出（またはフォールバック）
-                                    cols[col_idx % 3].image(png_bytes, caption=label, use_container_width=True)
-                                    zf.writestr(fname, png_bytes)
-                                    col_idx += 1
-
-                                except Exception as e:
-                                    cols[col_idx % 3].warning(f"画像抽出失敗: {e}")
-                                    col_idx += 1
-
-                    finally:
-                        zf.close()
-                        doc.close()
-
+                    mode_key = "xobject" if extract_mode.startswith("XObject") else "resample"
+                    result = extract_embedded_images(
+                        current_abs,
+                        img_info,
+                        mode=mode_key,
+                        dpi=int(resample_dpi)
+                    )
+                    # 画像をページ単位で表示
+                    for page_out in result["pages"]:
+                        st.markdown(f"**p.{page_out['page']} の画像**")
+                        imgs = page_out["images"]
+                        cols = st.columns(min(3, max(1, len(imgs))))
+                        for i, im in enumerate(imgs):
+                            if im["bytes"]:
+                                cols[i % 3].image(im["bytes"], caption=im["label"], width="stretch")  # use_container_width → width
+                            else:
+                                cols[i % 3].warning(im["label"])
+                    # ZIP ダウンロード
                     st.download_button(
                         "🗜 抽出画像をZIPでダウンロード",
-                        data=zip_buf.getvalue(),
+                        data=result["zip_bytes"],
                         file_name=f"{current_abs.stem}_images.zip",
                         mime="application/zip"
                     )

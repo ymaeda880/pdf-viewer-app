@@ -64,11 +64,11 @@ with left:
 
             try:
                 png = render_thumb_png(str(p), int(thumb_px), mtime_ns)
-                cols[c].image(png, caption=rel, use_container_width=True)
+                cols[c].image(png, caption=rel, width="stretch")
             except Exception as e:
                 cols[c].warning(f"サムネ生成失敗: {rel}\n{e}")
 
-            if cols[c].button("👁 開く", key=f"open_{rel}", use_container_width=True):
+            if cols[c].button("👁 開く", key=f"open_{rel}", width="stretch"):
                 st.session_state.pdf_selected = rel
 
 # ========== 右：ビューア & テキスト ==========

@@ -3,13 +3,22 @@ sysenv.py
 =================================
 OCR 周辺の実行環境チェック用ヘルパ。
 
-- ocrmypdf (Python API) の import 可否
+機能概要
+--------
+- ocrmypdf (Python API) の import 可否を確認
 - ocrmypdf (CLI) の存在確認
 - tesseract の存在確認
+
+公開関数一覧
+------------
+- env_checks() -> dict[str, bool]  
+    OCR 実行に必要なツール群の有無を返す。
 """
 
 from __future__ import annotations
 import shutil
+
+__all__ = ["env_checks"]
 
 def env_checks() -> dict[str, bool]:
     """OCR 実行に必要なツール群の有無を返す。

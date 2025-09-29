@@ -1,29 +1,7 @@
 # pages/10_PDFビューア.py
 # ------------------------------------------------------------
-# 📄 PDF ビューア（サムネイル）— PDF処理は lib/pdf_tools.py に集約
-# ------------------------------------------------------------
-# ------------------------------------------------------------
 # 📄 PDF ビューア（サムネイル）
-# - サムネ下に「テキストPDF/画像PDF」＋ページ数を表示
-# - 右ペインは ①pdf.js（streamlit-pdf-viewer） ②Streamlit内蔵（st.pdf）
-#   ③ブラウザPDFプラグイン のいずれかで表示可能（サイドバー）
-# - ビューアの幅/高さをサイドバーで調整
-# - 左上に倍率バッジ（自前ラベル）を重ね表示
-#
-# 【機能（既存）】
-# - 画像埋め込み解析：総数・形式別集計・ページ別内訳
-# - テキスト抽出：ページ別に冒頭500文字プレビュー
-# - 調査方式切替：全ページ / 先頭Nページ（既定：全ページ）
-#
-# 【今回の変更点（埋め込み画像の“抽出”対応）】
-# 1) 「埋め込み画像を表示する」時の抽出モードを追加（サイドバー）
-#    - XObjectそのまま抽出（真の埋め込み画像）：色空間をRGB化、SMask合成してPNG化
-#    - ページ見た目サイズで再サンプリング（視覚的抽出）：get_image_rects + クリップレンダリング
-# 2) 画像はページごとにサムネ表示。キャプションに「幅×高さ / 容量」を表示
-# 3) 現在の抽出モードで得た画像を ZIP で一括ダウンロード可能
-# 4) 解析関数で SMask xref を保持（合成に使用）
 # ------------------------------------------------------------
-
 from __future__ import annotations
 from pathlib import Path
 from typing import List, Dict, Any
@@ -36,17 +14,15 @@ try:
 except Exception:
     HAS_PDFJS = False
 
-# 共有ユーティリティ（lib/pdf_tools は lib/pdf の互換レイヤ）
-from lib.pdf_tools import (
-    render_thumb_png, read_pdf_bytes, read_pdf_b64, quick_pdf_info,
-    analyze_pdf_images, analyze_pdf_texts, extract_embedded_images,
-    iter_pdfs, rel_from
-)
+# 直接 lib/pdf/* を利用
+from lib.pdf.io import render_thumb_png, read_pdf_bytes, read_pdf_b64
+from lib.pdf.info import quick_pdf_info
+from lib.pdf.images import analyze_pdf_images, extract_embedded_images
+from lib.pdf.text import analyze_pdf_texts
+from lib.pdf.paths import iter_pdfs, rel_from
 
-# ========== パス ==========
-APP_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = APP_ROOT / "data"
-PDF_ROOT_DEFAULT = DATA_DIR / "pdf"
+# secrets.toml を解決した標準パス
+from lib.app_paths import PATHS  # PATHS.src_root を PDF 既定に使用
 
 # ========== UI ==========
 st.set_page_config(page_title="PDF ビューア", page_icon="📄", layout="wide")
@@ -54,8 +30,8 @@ st.title("📄 PDF ビューア")
 
 with st.sidebar:
     st.header("設定")
-    pdf_root_str = st.text_input("PDF ルートフォルダ", value=str(PDF_ROOT_DEFAULT))
-    pdf_root = Path(pdf_root_str).expanduser().resolve()
+    # 既定は secrets.toml → PATHS から
+    pdf_root = Path(st.text_input("PDF ルートフォルダ", value=str(PATHS.pdf_root))).expanduser().resolve()
 
     c1, c2 = st.columns(2)
     with c1:
@@ -99,7 +75,10 @@ with st.sidebar:
         index=0,
         help="前者はPDFに埋め込まれた元画像。後者はページ上の見た目サイズで切出し。"
     )
-    resample_dpi = st.slider("再サンプリング時のDPI", 72, 300, 144, 12, help="抽出モードが再サンプリングの時のみ有効")
+    resample_dpi = st.slider(
+        "再サンプリング時のDPI", 72, 300, 144, 12,
+        help="抽出モードが再サンプリングの時のみ有効"
+    )
 
 if "pdf_selected" not in st.session_state:
     st.session_state.pdf_selected = None
@@ -112,7 +91,10 @@ if year_filter:
     years = {y.strip() for y in year_filter.split(",") if y.strip()}
     if years:
         def _has_year(p: Path) -> bool:
-            parts = p.relative_to(pdf_root).parts
+            try:
+                parts = p.relative_to(pdf_root).parts
+            except ValueError:
+                parts = p.parts
             return any(part in years for part in parts[:2])
         pdf_paths = [p for p in pdf_paths if _has_year(p)]
 
@@ -125,11 +107,11 @@ left, right = st.columns([2, 3], gap="large")
 # ========== 左：サムネ ==========
 with left:
     st.subheader("📚 サムネイル")
-    rows = (len(pdf_paths) + grid_cols - 1) // grid_cols
+    rows = (len(pdf_paths) + int(grid_cols) - 1) // int(grid_cols)
     idx = 0
     for _ in range(rows):
-        cols = st.columns(grid_cols)
-        for c in range(grid_cols):
+        cols = st.columns(int(grid_cols))
+        for c in range(int(grid_cols)):
             if idx >= len(pdf_paths):
                 break
             p = pdf_paths[idx]; idx += 1
@@ -138,7 +120,7 @@ with left:
 
             try:
                 png = render_thumb_png(str(p), int(thumb_px), mtime_ns)
-                cols[c].image(png, caption=rel, width="stretch")  # use_container_width → width
+                cols[c].image(png, caption=rel, width="stretch")
             except Exception as e:
                 cols[c].warning(f"サムネ生成失敗: {rel}\n{e}")
 
@@ -149,9 +131,12 @@ with left:
                     unsafe_allow_html=True,
                 )
             except Exception:
-                cols[c].markdown("<div style='font-size:12px;color:#555;'>🧾 種別不明・📄 ページ数不明</div>", unsafe_allow_html=True)
+                cols[c].markdown(
+                    "<div style='font-size:12px;color:#555;'>🧾 種別不明・📄 ページ数不明</div>",
+                    unsafe_allow_html=True
+                )
 
-            if cols[c].button("👁 開く", key=f"open_{rel}", width="stretch"):  # use_container_width → width
+            if cols[c].button("👁 開く", key=f"open_{rel}", width="stretch"):
                 st.session_state.pdf_selected = rel
 
 # ========== 右：ビューア ==========
@@ -224,12 +209,16 @@ with right:
 
             # DLボタン（共通）
             with open(current_abs, "rb") as f:
-                st.download_button("📥 このPDFをダウンロード", data=f.read(), file_name=current_abs.name, mime="application/pdf")
+                st.download_button("📥 このPDFをダウンロード", data=f.read(),
+                                   file_name=current_abs.name, mime="application/pdf")
 
             # ========== 画像埋め込み情報 ==========
             st.divider()
             st.subheader("🖼 画像埋め込み情報")
-            img_info = analyze_pdf_images(str(current_abs), current_abs.stat().st_mtime_ns, mode=scan_mode, sample_pages=int(scan_sample_pages))
+            img_info = analyze_pdf_images(
+                str(current_abs), current_abs.stat().st_mtime_ns,
+                mode=scan_mode, sample_pages=int(scan_sample_pages)
+            )
 
             c = st.columns(4)
             c[0].metric("走査ページ数", f"{img_info['scanned_pages']}/{img_info['total_pages']}")
@@ -268,7 +257,7 @@ with right:
                         cols = st.columns(min(3, max(1, len(imgs))))
                         for i, im in enumerate(imgs):
                             if im["bytes"]:
-                                cols[i % 3].image(im["bytes"], caption=im["label"], width="stretch")  # use_container_width → width
+                                cols[i % 3].image(im["bytes"], caption=im["label"], width="stretch")
                             else:
                                 cols[i % 3].warning(im["label"])
                     # ZIP ダウンロード
@@ -282,7 +271,10 @@ with right:
             # ========== テキスト抽出情報 ==========
             st.divider()
             st.subheader("📝 抽出テキスト（get_textの抽出：OCRは行っていない）")
-            text_info = analyze_pdf_texts(str(current_abs), current_abs.stat().st_mtime_ns, mode=scan_mode, sample_pages=int(scan_sample_pages))
+            text_info = analyze_pdf_texts(
+                str(current_abs), current_abs.stat().st_mtime_ns,
+                mode=scan_mode, sample_pages=int(scan_sample_pages)
+            )
             st.write(f"走査ページ数: {text_info['scanned_pages']}/{text_info['total_pages']}")
             if not text_info["pages"]:
                 st.info("テキストが抽出できませんでした。")

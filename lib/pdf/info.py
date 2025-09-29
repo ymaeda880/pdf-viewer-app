@@ -2,18 +2,31 @@
 info.py
 =================================
 PDF の軽量解析（quick scan）。
-- 機能: 総ページ数と、先頭 N ページのテキスト有無から
-        「テキストPDF / 画像PDF」を推定。
 
-設計メモ:
-- PyMuPDF（fitz）で `get_text("text")` を使い、
-  一定以上の文字数（>=20）を含むページの割合で判定します。
+機能
+----
+- 総ページ数と、先頭 N ページのテキスト有無から
+  「テキストPDF / 画像PDF」を推定。
+
+設計メモ
+--------
+- PyMuPDF（fitz）で `get_text("text")` を使用。
+- 一定以上の文字数（>=20）を含むページの割合で判定。
 - キャッシュ可能（Streamlit 環境では `st.cache_data`）。
+
+公開関数一覧
+------------
+- quick_pdf_info(pdf_path: str, mtime_ns: int, sample_pages: int = 6,
+                 text_ratio_threshold: float = 0.3) -> dict  
+    軽量に PDF の種別（テキストPDF / 画像PDF）を推定する。
 """
+
 
 from __future__ import annotations
 from typing import Dict, Any
 from .cache import cache_data
+
+__all__ = ["quick_pdf_info"]  # 公開関数を明示
 
 
 @cache_data()(show_spinner=False)

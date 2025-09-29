@@ -1,0 +1,34 @@
+# settings.toml
+# プロジェクト名：pdf_viewer
+
+[env]
+# 現在利用する環境
+location = "Develop"
+
+[mounts]
+Mac     = "/Volumes/Extreme SSD"
+Server  = "/srv/ssd"
+
+[locations.Mac]
+pdf_root        = "project:data/pdf"
+converted_root  = "project:data/converted_pdf"
+text_root       = "project:data/text"
+library_root    = "project:data/library"
+
+[locations.Develop]
+pdf_root        = "project:data/pdf"
+converted_root  = "project:data/converted_pdf"
+text_root       = "project:data/text"
+library_root    = "project:data/library"
+
+[locations.Server]
+pdf_root        = "mount:Server/projects/pdf"
+converted_root  = "mount:Server/projects/converted_pdf"
+text_root       = "mount:Server/projects/text"
+library_root    = "project:data/library"
+
+# ===== 共通アプリ設定 =====
+[app]
+available_presets = ["Develop", "Mac", "Server"]
+
+

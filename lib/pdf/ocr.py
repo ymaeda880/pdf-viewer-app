@@ -3,14 +3,26 @@ ocr.py
 =================================
 OCRmyPDF を用いた OCR 変換（Python API を優先、失敗時は CLI へフォールバック）。
 
-- 目的: 画像PDFを「テキスト層付きPDF」に変換（force_ocr=True）
-- 設計:
-    1) Python API（高速・同一プロセス）
-    2) 失敗時は CLI 実行（環境差異への保険）
+目的
+----
+- 画像PDFを「テキスト層付きPDF」に変換（force_ocr=True）
 
-依存:
+設計
+----
+1. Python API（高速・同一プロセス）
+2. 失敗時は CLI 実行（環境差異への保険）
+
+依存
+----
 - OCRmyPDF（Python/CLI）
 - OS にインストール済みの Tesseract（jpn+eng など）
+
+公開関数一覧
+------------
+- run_ocr(src: Path, dst: Path, *, lang: str, optimize: int = 1,
+          jobs: int = 2, rotate_pages: bool = True,
+          sidecar_path: Optional[Path] = None) -> None  
+    OCR を実行（Python API → 失敗時は CLI）。
 """
 
 from __future__ import annotations
@@ -19,6 +31,7 @@ from typing import Optional
 import shutil
 import subprocess
 
+__all__ = ["run_ocr"]
 
 def run_ocr(
     src: Path,

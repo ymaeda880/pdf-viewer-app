@@ -3,22 +3,36 @@ images.py
 =================================
 PDF の埋め込み画像（XObject）解析と、画像の抽出（PNG）＋ ZIP 作成。
 
-- 解析: `analyze_pdf_images()` でページごとの xref/smask/拡張子を収集。
-- 抽出: `extract_embedded_images()` で
-        1) XObject そのまま抽出（真の埋め込み画像）
-        2) ページ見た目サイズで再サンプリング（矩形クリップ＋DPI指定）
-      の 2 モードに対応。
+機能概要
+--------
+- 解析: `analyze_pdf_images()`  
+  ページごとの埋め込み画像 (xref, smask, 拡張子) を収集。
+- 抽出: `extract_embedded_images()`  
+  - XObject そのまま抽出（真の埋め込み画像）
+  - ページ見た目サイズで再サンプリング（矩形クリップ＋DPI指定）
 
-Tips:
+Tips
+----
 - XObject は PDF 内で複数回描画されることがあるため、
   再サンプリングモードでは `get_image_rects(xref)` の全矩形を切り出します。
+
+公開関数一覧
+------------
+- analyze_pdf_images(pdf_path, mtime_ns, mode="all", sample_pages=6) -> dict  
+    PDF 内の埋め込み画像の構造を解析し、フォーマット・件数などを要約。
+
+- extract_embedded_images(pdf_path, img_index, mode="xobject", dpi=144) -> dict  
+    埋め込み画像を抽出し、PNG として ZIP に格納して返す。
 """
+
 
 from __future__ import annotations
 from typing import Dict, Any, List
 import io
 import zipfile
 from .cache import cache_data
+
+__all__ = ["analyze_pdf_images", "extract_embedded_images"]
 
 
 def _human_size(n: int) -> str:

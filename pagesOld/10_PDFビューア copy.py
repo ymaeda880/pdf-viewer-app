@@ -299,7 +299,7 @@ with left:
 
             try:
                 png = render_thumb_png(str(p), int(thumb_px), mtime_ns)
-                cols[c].image(png, caption=rel, use_container_width=True)
+                cols[c].image(png, caption=rel, width="stretch")
             except Exception as e:
                 cols[c].warning(f"サムネ生成失敗: {rel}\n{e}")
 
@@ -312,7 +312,7 @@ with left:
             except Exception:
                 cols[c].markdown("<div style='font-size:12px;color:#555;'>🧾 種別不明・📄 ページ数不明</div>", unsafe_allow_html=True)
 
-            if cols[c].button("👁 開く", key=f"open_{rel}", use_container_width=True):
+            if cols[c].button("👁 開く", key=f"open_{rel}", width="stretch"):
                 st.session_state.pdf_selected = rel
 
 # ========== 右：ビューア ==========
@@ -477,7 +477,7 @@ with right:
                                                 png_bytes, w, h = export_resampled_png(page, r, resample_dpi)
                                                 label = f"切出し {w}×{h}（{human_size(len(png_bytes))}）"
                                                 fname = f"p{pno:03d}_img{idx_in_page:02d}_rep{rep_idx}_x{xref}.png"
-                                                cols[col_idx % 3].image(png_bytes, caption=label, use_container_width=True)
+                                                cols[col_idx % 3].image(png_bytes, caption=label, width="stretch")
                                                 zf.writestr(fname, png_bytes)
                                                 col_idx += 1
                                             # 続きへ（rep毎に描画済）
@@ -489,7 +489,7 @@ with right:
                                             fname = f"p{pno:03d}_img{idx_in_page:02d}_x{xref}.png"
 
                                     # ここに来るのは XObject抽出（またはフォールバック）
-                                    cols[col_idx % 3].image(png_bytes, caption=label, use_container_width=True)
+                                    cols[col_idx % 3].image(png_bytes, caption=label, width="stretch")
                                     zf.writestr(fname, png_bytes)
                                     col_idx += 1
 
